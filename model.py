@@ -5,8 +5,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from videoprism import models as vp
-from utils import decode
+from videoprism import tokenizers
 
+from utils import decode
 
 # videoprism model wrapper
 class VideoPrismWrapper:
@@ -14,16 +15,20 @@ class VideoPrismWrapper:
         self,
         model_name="videoprism_lvt_public_v1_base",
         tokenizer_name="c4_en",
+        text_tokenizer=None,
         num_frames=16,
         frame_size=288,
     ):
         self.model_name = model_name
         self.num_frames = num_frames
         self.frame_size = frame_size
+        self.tokenizer_name = tokenizer_name
 
+        if text_tokenizer is None:
+            raise ValueError("text_tokenizer must be provided")
         self.flax_model = vp.get_model(self.model_name, fprop_dtype=jnp.bfloat16)
         self.loaded_state = vp.load_pretrained_weights(self.model_name)
-        self.text_tokenizer = vp.load_text_tokenizer(tokenizer_name)
+        self.text_tokenizer = text_tokenizer
         self.forward_fn = jax.jit(self._apply_forward)
 
     def _apply_forward(self, inputs, text_token_ids, text_paddings, train=False):
@@ -163,11 +168,20 @@ def embed_and_score(
     texts_v0,
     texts_v1,
     intervals: Sequence[Sequence[float]],
+    tokenizer_path=None,
     temperature=0.01,
     use_softmax=True,
 ):
     """Run the model on a video and two text lists, then return scores."""
-    video_embeddings, text_embeddings_v0, text_embeddings_v1 = _videoprism.embed(
+    global _videoprism_cache
+    if tokenizer_path is None:
+        raise ValueError("tokenizer_path must be provided")
+    if tokenizer_path not in _videoprism_cache:
+        _videoprism_cache[tokenizer_path] = VideoPrismWrapper(
+            text_tokenizer=tokenizers.SentencePieceTokenizer(tokenizer_path),
+        )
+    wrapper = _videoprism_cache[tokenizer_path]
+    video_embeddings, text_embeddings_v0, text_embeddings_v1 = wrapper.embed(
         video_path,
         texts_v0,
         texts_v1,
@@ -192,9 +206,7 @@ def embed_and_score(
     return scores
 
 
-
-
-_videoprism = VideoPrismWrapper()
-MODEL_NAME = _videoprism.model_name
-NUM_FRAMES = _videoprism.num_frames
-FRAME_SIZE = _videoprism.frame_size
+_videoprism_cache = {}
+MODEL_NAME = "videoprism_lvt_public_v1_base"
+NUM_FRAMES = 16
+FRAME_SIZE = 288
